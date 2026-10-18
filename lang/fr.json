@@ -1,0 +1,19 @@
+{
+    "The provided password was incorrect.": "Le mot de passe fourni est incorrect.",
+    "Remember me": "Garder ma session active",
+    "Forgot your password?": "Mot de passe oublié ?",
+    "Log in": "Se connecter",
+    "Register": "Créer un compte",
+    "Name": "Nom",
+    "Email": "Adresse électronique",
+    "Password": "Mot de passe",
+    "Confirm Password": "Confirmer le mot de passe",
+    "Save": "Enregistrer",
+    "Saved.": "Modifications enregistrées.",
+    "Profile": "Mon profil",
+    "Update Password": "Modifier le mot de passe",
+    "Current Password": "Mot de passe actuel",
+    "New Password": "Nouveau mot de passe",
+    "Log Out": "Déconnexion",
+    "Dashboard": "Tableau de bord"
+}

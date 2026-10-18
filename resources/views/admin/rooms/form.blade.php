@@ -1,0 +1,11 @@
+<form class="card p-4" method="POST" action="{{ $room ? route('admin.rooms.update',$room) : route('admin.rooms.store') }}">@csrf @if($room) @method('PUT') @endif
+<div class="row g-3">
+    <div class="col-md-6"><label class="form-label">Nom *</label><input required class="form-control" name="name" value="{{ old('name',$room?->name) }}"></div>
+    <div class="col-md-6"><label class="form-label">Code *</label><input required class="form-control" name="code" value="{{ old('code',$room?->code) }}"></div>
+    <div class="col-md-4"><label class="form-label">Bâtiment</label><input class="form-control" name="building" value="{{ old('building',$room?->building) }}"></div>
+    <div class="col-md-4"><label class="form-label">Étage</label><input class="form-control" name="floor" value="{{ old('floor',$room?->floor) }}"></div>
+    <div class="col-md-4"><label class="form-label">Capacité *</label><input required type="number" min="1" class="form-control" name="capacity" value="{{ old('capacity',$room?->capacity) }}"></div>
+    <div class="col-md-6"><label class="form-label">Type *</label><select class="form-select" name="type">@foreach(['classroom'=>'Salle de cours','amphitheatre'=>'Amphithéâtre','laboratory'=>'Laboratoire','computer_lab'=>'Salle informatique','meeting_room'=>'Salle de réunion'] as $value=>$label)<option value="{{ $value }}" @selected(old('type',$room?->type ?? 'classroom')===$value)>{{ $label }}</option>@endforeach</select></div>
+    <div class="col-md-6"><label class="form-label">Statut *</label><select class="form-select" name="status">@foreach(['available'=>'Disponible','maintenance'=>'En maintenance','inactive'=>'Inactive'] as $value=>$label)<option value="{{ $value }}" @selected(old('status',$room?->status ?? 'available')===$value)>{{ $label }}</option>@endforeach</select></div>
+    <div class="col-12"><label class="form-label">Équipements</label><input class="form-control" name="equipment" value="{{ old('equipment',implode(', ',$room?->equipment ?? [])) }}" placeholder="Projecteur, tableau, ordinateurs"><small class="text-secondary">Séparez les équipements par des virgules.</small></div>
+</div><div class="d-flex justify-content-end gap-2 mt-4"><a class="btn btn-light" href="{{ route('admin.rooms.index') }}">Annuler</a><button class="btn btn-primary">Enregistrer</button></div></form>
