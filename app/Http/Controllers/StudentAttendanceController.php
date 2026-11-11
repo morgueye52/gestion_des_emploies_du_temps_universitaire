@@ -13,7 +13,7 @@ class StudentAttendanceController extends Controller
         $student = $request->user()->student;
         $records = $student
             ? AttendanceRecord::query()
-                ->with(['session.course', 'session.room', 'teacher'])
+                ->with(['session.course', 'session.room', 'teacher', 'justification.reviewer'])
                 ->where('student_id', $student->id)
                 ->orderByDesc('attendance_date')
                 ->orderByDesc('id')

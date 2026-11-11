@@ -1,23 +1,27 @@
 <?php
 
+use App\Http\Controllers\AbsenceJustificationController;
 use App\Http\Controllers\AcademicCatalogController;
 use App\Http\Controllers\AcademicEventController;
 use App\Http\Controllers\CourseController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\ExamController;
+use App\Http\Controllers\GradeValidationController;
 use App\Http\Controllers\HomeController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\RoomController;
 use App\Http\Controllers\SeanceController;
+use App\Http\Controllers\StudentAbsenceJustificationController;
+use App\Http\Controllers\StudentAttendanceController;
 use App\Http\Controllers\StudentController;
 use App\Http\Controllers\StudentDashboardController;
 use App\Http\Controllers\StudentEnrollmentController;
 use App\Http\Controllers\StudentGradeController;
-use App\Http\Controllers\StudentAttendanceController;
-use App\Http\Controllers\TeacherController;
 use App\Http\Controllers\TeacherAttendanceController;
+use App\Http\Controllers\TeacherAvailabilityController;
+use App\Http\Controllers\TeacherController;
 use App\Http\Controllers\TeacherDashboardController;
 use App\Http\Controllers\TeacherGradeController;
 use App\Http\Controllers\UserInvitationController;
@@ -54,6 +58,13 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::delete('/grades/{grade}', [TeacherGradeController::class, 'destroy'])->whereNumber('grade')->name('grades.destroy');
         Route::get('/attendance', [TeacherAttendanceController::class, 'index'])->name('attendance.index');
         Route::post('/attendance/{session}', [TeacherAttendanceController::class, 'store'])->whereNumber('session')->name('attendance.store');
+        Route::get('/absence-justifications', [AbsenceJustificationController::class, 'index'])->name('absence-justifications.index');
+        Route::post('/absence-justifications/{justification}/review', [AbsenceJustificationController::class, 'review'])
+            ->whereNumber('justification')->name('absence-justifications.review');
+        Route::get('/availabilities', [TeacherAvailabilityController::class, 'index'])->name('availabilities.index');
+        Route::post('/availabilities', [TeacherAvailabilityController::class, 'store'])->name('availabilities.store');
+        Route::delete('/availabilities/{availability}', [TeacherAvailabilityController::class, 'destroy'])
+            ->whereNumber('availability')->name('availabilities.destroy');
     });
     Route::get('/student/dashboard', StudentDashboardController::class)
         ->middleware('role:student')
@@ -63,7 +74,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::post('/enrollments', [StudentEnrollmentController::class, 'store'])->name('enrollments.store');
         Route::get('/grades', [StudentGradeController::class, 'index'])->name('grades.index');
         Route::get('/attendance', [StudentAttendanceController::class, 'index'])->name('attendance.index');
+        Route::post('/attendance/{record}/justification', [StudentAbsenceJustificationController::class, 'store'])
+            ->whereNumber('record')->name('attendance.justification.store');
     });
+    Route::get('/absence-justifications/{justification}/attachment', [AbsenceJustificationController::class, 'attachment'])
+        ->whereNumber('justification')->name('absence-justifications.attachment');
     Route::get('/notifications', [NotificationController::class, 'index'])->name('notifications.index');
     Route::post('/notifications/{notification}/read', [NotificationController::class, 'read'])
         ->whereUuid('notification')
@@ -83,6 +98,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
             $academicReadRoles = 'role:admin,super_admin,director_general,academic_direction,studies_manager,department_manager,registrar';
             $academicManageRoles = 'role:admin,super_admin,academic_direction';
             $studentManageRoles = 'role:admin,super_admin,academic_direction,studies_manager,department_manager,registrar';
+            $gradeValidationRoles = 'role:admin,super_admin,academic_direction,studies_manager,department_manager,registrar';
+            $gradeValidationRoles = 'role:admin,super_admin,academic_direction,studies_manager,department_manager,registrar';
             $courseScheduleReadRoles = 'role:admin,super_admin,director_general,academic_direction,studies_manager,department_manager,registrar,it_admin,hr_admin';
             $roomReadRoles = 'role:admin,super_admin,director_general,academic_direction,studies_manager,department_manager,registrar,it_admin';
             $teachingReadRoles = 'role:admin,super_admin,director_general,academic_direction,studies_manager,department_manager,registrar';
@@ -90,6 +107,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
             $courseManageRoles = 'role:admin,super_admin,academic_direction,studies_manager,department_manager';
 
             Route::middleware($academicReadRoles)->group(function () {
+                Route::get('/reports/attendance', [ReportController::class, 'attendance'])
+                    ->name('reports.attendance');
+
                 foreach (['faculties', 'departments', 'formations', 'levels', 'academic-years', 'semesters', 'classes', 'groups'] as $entity) {
                     Route::get("/academic/{$entity}", [AcademicCatalogController::class, 'index'])
                         ->defaults('entity', $entity)->name("academic.{$entity}.index");
@@ -123,6 +143,17 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
             Route::middleware($studentManageRoles)->group(function () {
                 Route::resource('students', StudentController::class)->except(['index', 'show'])->names('students');
+                Route::get('/absence-justifications', [AbsenceJustificationController::class, 'index'])
+                    ->name('absence-justifications.index');
+                Route::post('/absence-justifications/{justification}/review', [AbsenceJustificationController::class, 'review'])
+                    ->whereNumber('justification')->name('absence-justifications.review');
+            });
+
+            Route::middleware($gradeValidationRoles)->group(function () {
+                Route::get('/grades/validation', [GradeValidationController::class, 'index'])
+                    ->name('grades.validation');
+                Route::post('/grades/{grade}/review', [GradeValidationController::class, 'review'])
+                    ->whereNumber('grade')->name('grades.review');
             });
 
             Route::middleware('role:admin,super_admin,director_general,academic_direction,studies_manager,department_manager,hr_admin')->group(function () {

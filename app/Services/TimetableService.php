@@ -68,10 +68,9 @@ class TimetableService
 
         if (! empty($data['teacher_id'])) {
             $teacher = Teacher::with('availabilities')->find($data['teacher_id']);
-            $availability = $teacher?->availabilities
-                ->where('weekday', (int) $data['weekday']);
+            $availability = $teacher?->availabilities->where('weekday', (int) $data['weekday']);
 
-            if ($availability?->isNotEmpty() && ! $availability->contains(
+            if ($teacher?->availabilities->isNotEmpty() && ! $availability?->contains(
                 fn ($slot) => substr($slot->starts_at, 0, 5) <= substr($data['starts_at'], 0, 5)
                     && substr($slot->ends_at, 0, 5) >= substr($data['ends_at'], 0, 5)
             )) {

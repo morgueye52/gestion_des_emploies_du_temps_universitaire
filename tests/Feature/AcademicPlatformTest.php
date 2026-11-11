@@ -1,8 +1,10 @@
 <?php
 
+use App\Models\AbsenceJustification;
 use App\Models\AcademicClass;
 use App\Models\AcademicEvent;
 use App\Models\AcademicYear;
+use App\Models\AttendanceRecord;
 use App\Models\Course;
 use App\Models\Department;
 use App\Models\Exam;
@@ -18,6 +20,10 @@ use App\Models\Teacher;
 use App\Models\TeacherAvailability;
 use App\Models\User;
 use App\Notifications\SessionScheduleChanged;
+use App\Services\TimetableService;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
 
 test('students cannot access administrative resources', function () {
     $student = User::factory()->create(['role' => 'student']);
@@ -401,13 +407,37 @@ test('teachers can manage grades only for students enrolled in their assigned co
         'last_name' => 'Autre',
         'status' => 'active',
     ]);
+    $academicYear = AcademicYear::create([
+        'name' => '2026-2027',
+        'starts_on' => '2026-08-01',
+        'ends_on' => '2027-07-31',
+        'is_active' => true,
+    ]);
+    $semester = Semester::create([
+        'academic_year_id' => $academicYear->id,
+        'name' => 'Semestre des notes',
+        'starts_on' => '2026-08-01',
+        'ends_on' => '2027-01-31',
+        'is_active' => true,
+    ]);
     $course = Course::create([
         'department_id' => $department->id,
         'formation_id' => $formation->id,
+        'semester_id' => $semester->id,
         'code' => 'NOT101',
         'name' => 'Évaluation des notes',
         'credits' => 3,
         'weekly_hours' => 2,
+        'is_active' => true,
+    ]);
+    $secondCourse = Course::create([
+        'department_id' => $department->id,
+        'formation_id' => $formation->id,
+        'semester_id' => $semester->id,
+        'code' => 'NOT103',
+        'name' => 'Cours complémentaire noté',
+        'credits' => 2,
+        'weekly_hours' => 1,
         'is_active' => true,
     ]);
     $unassignedCourse = Course::create([
@@ -420,7 +450,9 @@ test('teachers can manage grades only for students enrolled in their assigned co
         'is_active' => true,
     ]);
     $teacher->courses()->attach($course);
+    $teacher->courses()->attach($secondCourse);
     $student->courseEnrollments()->create(['course_id' => $course->id]);
+    $student->courseEnrollments()->create(['course_id' => $secondCourse->id]);
 
     $this->actingAs($teacherUser)
         ->get(route('teacher.grades.index', ['course_id' => $course->id]))
@@ -439,21 +471,36 @@ test('teachers can manage grades only for students enrolled in their assigned co
     ])->assertRedirect(route('teacher.grades.index', ['course_id' => $course->id]));
 
     $grade = \App\Models\CourseGrade::query()->firstOrFail();
+    expect($grade->status)->toBe('pending');
+    \App\Models\CourseGrade::create([
+        'course_id' => $course->id,
+        'student_id' => $student->id,
+        'teacher_id' => $teacher->id,
+        'assessment_name' => 'Examen final',
+        'assessment_type' => 'examen',
+        'score' => 15,
+        'assessed_on' => now()->subDay()->toDateString(),
+    ]);
+    \App\Models\CourseGrade::create([
+        'course_id' => $secondCourse->id,
+        'student_id' => $student->id,
+        'teacher_id' => $teacher->id,
+        'assessment_name' => 'Devoir',
+        'assessment_type' => 'devoir',
+        'score' => 18,
+        'assessed_on' => now()->subDay()->toDateString(),
+    ]);
     expect((float) $grade->score)->toBe(12.5)
         ->and($grade->teacher_id)->toBe($teacher->id);
 
     $this->actingAs($studentUser)
         ->get(route('student.grades.index'))
         ->assertOk()
-        ->assertSee('Contrôle continu 1')
-        ->assertSee('12,5/20')
-        ->assertSee('Bon travail.');
-
-    $this->actingAs($otherStudentUser)
-        ->get(route('student.grades.index'))
-        ->assertOk()
         ->assertDontSee('Contrôle continu 1')
-        ->assertDontSee('Bon travail.');
+        ->assertSee('Examen final')
+        ->assertSee('16,20 / 20')
+        ->assertSee('Moyenne semestrielle pondérée par crédits')
+        ->assertSee('Cours complémentaire noté');
 
     $this->actingAs($teacherUser)
         ->put(route('teacher.grades.update', $grade), [
@@ -467,7 +514,42 @@ test('teachers can manage grades only for students enrolled in their assigned co
         ])
         ->assertRedirect(route('teacher.grades.index', ['course_id' => $course->id]));
 
-    expect((float) $grade->fresh()->score)->toBe(14.0);
+    expect((float) $grade->fresh()->score)->toBe(14.0)
+        ->and($grade->fresh()->status)->toBe('pending');
+
+    $registrar = User::factory()->create(['role' => 'registrar']);
+    $this->actingAs($registrar)
+        ->get(route('admin.grades.validation'))
+        ->assertOk()
+        ->assertSee('Contrôle continu 1')
+        ->assertSee('Progrès constatés.');
+
+    $this->from(route('admin.grades.validation'))
+        ->post(route('admin.grades.review', $grade), ['decision' => 'published'])
+        ->assertRedirect(route('admin.grades.validation'));
+
+    expect($grade->fresh()->status)->toBe('published')
+        ->and($studentUser->notifications()->count())->toBe(1)
+        ->and($teacherUser->notifications()->count())->toBe(1);
+
+    $this->actingAs($studentUser)
+        ->get(route('student.grades.index'))
+        ->assertOk()
+        ->assertSee('Contrôle continu 1')
+        ->assertSee('14/20')
+        ->assertSee('Progrès constatés.')
+        ->assertSee('14,50 / 20')
+        ->assertSee('15,90 / 20');
+
+    $this->actingAs($otherStudentUser)
+        ->get(route('student.grades.index'))
+        ->assertOk()
+        ->assertDontSee('Contrôle continu 1')
+        ->assertDontSee('Bon travail.');
+
+    $this->actingAs($teacherUser)
+        ->get(route('teacher.grades.edit', $grade))
+        ->assertForbidden();
 
     $this->actingAs($otherTeacherUser)
         ->get(route('teacher.grades.edit', $grade))
@@ -494,9 +576,155 @@ test('teachers can manage grades only for students enrolled in their assigned co
     ])->assertSessionHasErrors('score');
 
     $this->delete(route('teacher.grades.destroy', $grade))
+        ->assertForbidden();
+
+    $this->post(route('teacher.grades.store'), [
+        'course_id' => $course->id,
+        'student_id' => $student->id,
+        'assessment_name' => 'Brouillon à supprimer',
+        'assessment_type' => 'autre',
+        'score' => '10',
+        'assessed_on' => now()->toDateString(),
+    ])->assertRedirect(route('teacher.grades.index', ['course_id' => $course->id]));
+
+    $pendingGrade = \App\Models\CourseGrade::where('assessment_name', 'Brouillon à supprimer')->firstOrFail();
+    $this->delete(route('teacher.grades.destroy', $pendingGrade))
         ->assertRedirect(route('teacher.grades.index', ['course_id' => $course->id]));
 
-    expect(\App\Models\CourseGrade::count())->toBe(0);
+    expect(\App\Models\CourseGrade::whereKey($grade->id)->exists())->toBeTrue()
+        ->and(\App\Models\CourseGrade::count())->toBe(3);
+});
+
+test('department managers can reject only in-scope grades and teachers can resubmit corrections', function () {
+    $department = Department::create(['name' => 'Département validation', 'code' => 'DVAL', 'is_active' => true]);
+    $otherDepartment = Department::create(['name' => 'Département autre note', 'code' => 'DAUT', 'is_active' => true]);
+    $formation = Formation::create([
+        'department_id' => $department->id,
+        'name' => 'Formation validation',
+        'code' => 'FVAL',
+        'is_active' => true,
+    ]);
+    $otherFormation = Formation::create([
+        'department_id' => $otherDepartment->id,
+        'name' => 'Formation externe',
+        'code' => 'FAUT',
+        'is_active' => true,
+    ]);
+    $teacherUser = User::factory()->create(['role' => 'teacher']);
+    $studentUser = User::factory()->create(['role' => 'student']);
+    $departmentManager = User::factory()->create([
+        'role' => 'department_manager',
+        'department_id' => $department->id,
+    ]);
+    $teacher = Teacher::create([
+        'user_id' => $teacherUser->id,
+        'department_id' => $department->id,
+        'first_name' => 'Awa',
+        'last_name' => 'Enseignante',
+        'weekly_hours' => 10,
+        'is_active' => true,
+    ]);
+    $student = Student::create([
+        'user_id' => $studentUser->id,
+        'matricule' => 'VAL-ETU-001',
+        'first_name' => 'Fatou',
+        'last_name' => 'Étudiante',
+        'status' => 'active',
+    ]);
+    $course = Course::create([
+        'department_id' => $department->id,
+        'formation_id' => $formation->id,
+        'code' => 'VAL101',
+        'name' => 'Cours à valider',
+        'credits' => 3,
+        'weekly_hours' => 2,
+        'is_active' => true,
+    ]);
+    $otherCourse = Course::create([
+        'department_id' => $otherDepartment->id,
+        'formation_id' => $otherFormation->id,
+        'code' => 'AUT101',
+        'name' => 'Cours hors département',
+        'credits' => 3,
+        'weekly_hours' => 2,
+        'is_active' => true,
+    ]);
+    $teacher->courses()->attach([$course->id, $otherCourse->id]);
+    $student->courseEnrollments()->create(['course_id' => $course->id]);
+    $grade = \App\Models\CourseGrade::create([
+        'course_id' => $course->id,
+        'student_id' => $student->id,
+        'teacher_id' => $teacher->id,
+        'assessment_name' => 'Évaluation à corriger',
+        'assessment_type' => 'controle',
+        'score' => 8,
+        'assessed_on' => now()->toDateString(),
+        'status' => 'pending',
+    ]);
+    $outsideGrade = \App\Models\CourseGrade::create([
+        'course_id' => $otherCourse->id,
+        'student_id' => $student->id,
+        'teacher_id' => $teacher->id,
+        'assessment_name' => 'Évaluation externe',
+        'assessment_type' => 'controle',
+        'score' => 10,
+        'assessed_on' => now()->toDateString(),
+        'status' => 'pending',
+    ]);
+
+    $this->actingAs($departmentManager)
+        ->get(route('admin.grades.validation'))
+        ->assertOk()
+        ->assertSee('Évaluation à corriger')
+        ->assertDontSee('Évaluation externe')
+        ->assertDontSee('Cours hors département');
+
+    $this->post(route('admin.grades.review', $outsideGrade), [
+        'decision' => 'published',
+    ])->assertNotFound();
+
+    $this->from(route('admin.grades.validation'))
+        ->post(route('admin.grades.review', $grade), [
+            'decision' => 'rejected',
+        ])
+        ->assertSessionHasErrors('review_comment');
+
+    $this->from(route('admin.grades.validation'))
+        ->post(route('admin.grades.review', $grade), [
+            'decision' => 'rejected',
+            'review_comment' => 'Veuillez vérifier le barème utilisé.',
+        ])
+        ->assertRedirect(route('admin.grades.validation'));
+
+    expect($grade->fresh()->status)->toBe('rejected')
+        ->and($teacherUser->notifications()->count())->toBe(1);
+
+    $this->actingAs($teacherUser)
+        ->get(route('teacher.grades.index', ['course_id' => $course->id]))
+        ->assertOk()
+        ->assertSee('À corriger')
+        ->assertSee('Veuillez vérifier le barème utilisé.');
+
+    $this->actingAs($studentUser)
+        ->get(route('student.grades.index'))
+        ->assertOk()
+        ->assertDontSee('Évaluation à corriger');
+
+    $this->actingAs($teacherUser)
+        ->put(route('teacher.grades.update', $grade), [
+            'course_id' => $course->id,
+            'student_id' => $student->id,
+            'assessment_name' => 'Évaluation à corriger',
+            'assessment_type' => 'controle',
+            'score' => 12,
+            'assessed_on' => now()->toDateString(),
+            'comment' => 'Barème rectifié.',
+        ])
+        ->assertRedirect(route('teacher.grades.index', ['course_id' => $course->id]));
+
+    expect($grade->fresh()->status)->toBe('pending')
+        ->and($grade->fresh()->reviewer_user_id)->toBeNull()
+        ->and($grade->fresh()->review_comment)->toBeNull();
 });
 
 test('teachers can record dated attendance only for their session roster and students see only their own records', function () {
@@ -584,7 +812,7 @@ test('teachers can record dated attendance only for their session roster and stu
         ])->id,
         'academic_class_id' => $academicClass->id,
         'group_id' => $group->id,
-        'weekday' => now()->dayOfWeekIso,
+        'session_date' => now()->toDateString(),
         'starts_at' => '08:00',
         'ends_at' => '10:00',
         'type' => 'lecture',
@@ -643,6 +871,266 @@ test('teachers can record dated attendance only for their session roster and stu
                 $otherStudent->id => ['status' => 'present'],
             ],
         ])->assertSessionHasErrors('attendance_date');
+});
+
+test('students can submit a private absence justification that their teacher can approve', function () {
+    Storage::fake('local');
+    $teacherUser = User::factory()->create(['role' => 'teacher']);
+    $studentUser = User::factory()->create(['role' => 'student']);
+    $otherStudentUser = User::factory()->create(['role' => 'student']);
+    $department = Department::create(['name' => 'Département justificatif', 'code' => 'DJUS', 'is_active' => true]);
+    $formation = Formation::create([
+        'department_id' => $department->id,
+        'name' => 'Formation justificatif',
+        'code' => 'FJUS',
+        'is_active' => true,
+    ]);
+    $academicClass = AcademicClass::create([
+        'formation_id' => $formation->id,
+        'name' => 'Classe justificatif',
+        'code' => 'CJUS',
+        'capacity' => 30,
+        'is_active' => true,
+    ]);
+    $teacher = Teacher::create([
+        'user_id' => $teacherUser->id,
+        'department_id' => $department->id,
+        'first_name' => 'Mariam',
+        'last_name' => 'Enseignante',
+        'weekly_hours' => 10,
+        'is_active' => true,
+    ]);
+    $student = Student::create([
+        'user_id' => $studentUser->id,
+        'academic_class_id' => $academicClass->id,
+        'matricule' => 'JUST-ETU-001',
+        'first_name' => 'Awa',
+        'last_name' => 'Étudiante',
+        'status' => 'active',
+    ]);
+    $student->courseEnrollments()->create([
+        'course_id' => Course::create([
+            'department_id' => $department->id,
+            'formation_id' => $formation->id,
+            'code' => 'JUS101',
+            'name' => 'Cours justificatif',
+            'credits' => 3,
+            'weekly_hours' => 2,
+            'is_active' => true,
+        ])->id,
+    ]);
+    Student::create([
+        'user_id' => $otherStudentUser->id,
+        'academic_class_id' => $academicClass->id,
+        'matricule' => 'JUST-ETU-002',
+        'first_name' => 'Fatou',
+        'last_name' => 'Autre',
+        'status' => 'active',
+    ]);
+    $course = Course::where('code', 'JUS101')->sole();
+    $room = Room::create([
+        'name' => 'Salle justificatif',
+        'code' => 'SJUS',
+        'capacity' => 30,
+        'type' => 'classroom',
+        'status' => 'available',
+    ]);
+    $session = Seance::create([
+        'course_id' => $course->id,
+        'teacher_id' => $teacher->id,
+        'room_id' => $room->id,
+        'academic_class_id' => $academicClass->id,
+        'session_date' => now()->toDateString(),
+        'starts_at' => '08:00',
+        'ends_at' => '10:00',
+        'type' => 'lecture',
+    ]);
+    $record = AttendanceRecord::create([
+        'session_id' => $session->id,
+        'student_id' => $student->id,
+        'teacher_id' => $teacher->id,
+        'attendance_date' => now()->toDateString(),
+        'status' => 'absent',
+    ]);
+
+    $this->actingAs($studentUser)
+        ->get(route('student.attendance.index'))
+        ->assertOk()
+        ->assertSee('Déposer une demande');
+
+    $this->post(route('student.attendance.justification.store', $record), [
+        'reason' => 'J’étais malade et j’ai consulté un médecin.',
+        'attachment' => UploadedFile::fake()->create('certificat.pdf', 100, 'application/pdf'),
+    ])->assertRedirect(route('student.attendance.index'));
+
+    $justification = AbsenceJustification::sole();
+    expect($justification->status)->toBe('pending')
+        ->and($record->fresh()->status)->toBe('absent');
+    Storage::disk('local')->assertExists($justification->attachment_path);
+    expect($teacherUser->notifications()->count())->toBe(1);
+
+    $this->from(route('student.attendance.index'))
+        ->post(route('student.attendance.justification.store', $record), [
+            'reason' => 'Une deuxième demande ne doit pas être possible.',
+        ])
+        ->assertSessionHasErrors('reason');
+
+    $this->actingAs($otherStudentUser)
+        ->post(route('student.attendance.justification.store', $record), [
+            'reason' => 'Je tente de déposer une demande pour un autre étudiant.',
+        ])
+        ->assertNotFound();
+
+    $this->actingAs($otherStudentUser)
+        ->get(route('absence-justifications.attachment', $justification))
+        ->assertNotFound();
+
+    $this->actingAs($teacherUser)
+        ->get(route('teacher.absence-justifications.index'))
+        ->assertOk()
+        ->assertSee('J’étais malade')
+        ->assertSee(route('absence-justifications.attachment', $justification));
+
+    $this->get(route('absence-justifications.attachment', $justification))->assertOk();
+
+    $this->from(route('teacher.absence-justifications.index'))
+        ->post(route('teacher.absence-justifications.review', $justification), [
+            'decision' => 'approved',
+            'review_comment' => 'Justificatif vérifié.',
+        ])
+        ->assertRedirect(route('teacher.absence-justifications.index'));
+
+    expect($justification->fresh()->status)->toBe('approved')
+        ->and($record->fresh()->status)->toBe('excused')
+        ->and($studentUser->notifications()->count())->toBe(1);
+
+    $this->actingAs($studentUser)
+        ->post(route('student.attendance.justification.store', $record), [
+            'reason' => 'Cette absence est déjà justifiée et validée.',
+        ])
+        ->assertForbidden();
+
+    $this->actingAs($teacherUser)
+        ->post(route('teacher.attendance.store', $session), [
+            'attendance_date' => now()->toDateString(),
+            'attendance' => [$student->id => ['status' => 'absent']],
+        ])
+        ->assertSessionHasErrors("attendance.{$student->id}.status");
+    expect($record->fresh()->status)->toBe('excused');
+});
+
+test('authorized staff can reject absence justifications while unrelated teachers cannot review them', function () {
+    $teacherUser = User::factory()->create(['role' => 'teacher']);
+    $otherTeacherUser = User::factory()->create(['role' => 'teacher']);
+    $studentUser = User::factory()->create(['role' => 'student']);
+    $registrar = User::factory()->create(['role' => 'registrar']);
+    $department = Department::create(['name' => 'Département décision', 'code' => 'DDEC', 'is_active' => true]);
+    $formation = Formation::create([
+        'department_id' => $department->id,
+        'name' => 'Formation décision',
+        'code' => 'FDEC',
+        'is_active' => true,
+    ]);
+    $academicClass = AcademicClass::create([
+        'formation_id' => $formation->id,
+        'name' => 'Classe décision',
+        'code' => 'CDEC',
+        'capacity' => 30,
+        'is_active' => true,
+    ]);
+    $teacher = Teacher::create([
+        'user_id' => $teacherUser->id,
+        'department_id' => $department->id,
+        'first_name' => 'Moussa',
+        'last_name' => 'Responsable',
+        'weekly_hours' => 10,
+        'is_active' => true,
+    ]);
+    Teacher::create([
+        'user_id' => $otherTeacherUser->id,
+        'department_id' => $department->id,
+        'first_name' => 'Ibrahima',
+        'last_name' => 'Autre',
+        'weekly_hours' => 10,
+        'is_active' => true,
+    ]);
+    $student = Student::create([
+        'user_id' => $studentUser->id,
+        'academic_class_id' => $academicClass->id,
+        'matricule' => 'DEC-ETU-001',
+        'first_name' => 'Awa',
+        'last_name' => 'Décision',
+        'status' => 'active',
+    ]);
+    $course = Course::create([
+        'department_id' => $department->id,
+        'formation_id' => $formation->id,
+        'code' => 'DEC101',
+        'name' => 'Cours décision',
+        'credits' => 3,
+        'weekly_hours' => 2,
+        'is_active' => true,
+    ]);
+    $room = Room::create([
+        'name' => 'Salle décision',
+        'code' => 'SDEC',
+        'capacity' => 30,
+        'type' => 'classroom',
+        'status' => 'available',
+    ]);
+    $session = Seance::create([
+        'course_id' => $course->id,
+        'teacher_id' => $teacher->id,
+        'room_id' => $room->id,
+        'academic_class_id' => $academicClass->id,
+        'session_date' => now()->toDateString(),
+        'starts_at' => '08:00',
+        'ends_at' => '10:00',
+        'type' => 'lecture',
+    ]);
+    $record = AttendanceRecord::create([
+        'session_id' => $session->id,
+        'student_id' => $student->id,
+        'teacher_id' => $teacher->id,
+        'attendance_date' => now()->toDateString(),
+        'status' => 'absent',
+    ]);
+    $justification = AbsenceJustification::create([
+        'attendance_record_id' => $record->id,
+        'student_id' => $student->id,
+        'reason' => 'Motif de test pour vérifier le traitement.',
+        'status' => 'pending',
+    ]);
+
+    $this->actingAs($otherTeacherUser)
+        ->post(route('teacher.absence-justifications.review', $justification), ['decision' => 'approved'])
+        ->assertNotFound();
+
+    $this->actingAs($registrar)
+        ->get(route('admin.absence-justifications.index'))
+        ->assertOk()
+        ->assertSee('Motif de test');
+
+    $this->from(route('admin.absence-justifications.index'))
+        ->post(route('admin.absence-justifications.review', $justification), [
+            'decision' => 'rejected',
+            'review_comment' => 'Le document demandé est manquant.',
+        ])
+        ->assertRedirect(route('admin.absence-justifications.index'));
+
+    expect($justification->fresh()->status)->toBe('rejected')
+        ->and($record->fresh()->status)->toBe('absent')
+        ->and($justification->fresh()->review_comment)->toBe('Le document demandé est manquant.');
+
+    $this->actingAs($studentUser)
+        ->post(route('student.attendance.justification.store', $record), [
+            'reason' => 'Je transmets une nouvelle explication avec les détails nécessaires.',
+        ])
+        ->assertRedirect(route('student.attendance.index'));
+
+    expect(AbsenceJustification::count())->toBe(1)
+        ->and($justification->fresh()->status)->toBe('pending')
+        ->and($justification->fresh()->reviewer_user_id)->toBeNull();
 });
 
 test('student dashboards can display the monthly academic agenda', function () {
@@ -953,6 +1441,91 @@ test('session conflicts link to teacher availability and room reservations', fun
         ->assertSee('R-101');
 });
 
+test('teachers can manage only their own non-overlapping availability slots', function () {
+    $teacherUser = User::factory()->create(['role' => 'teacher']);
+    $otherTeacherUser = User::factory()->create(['role' => 'teacher']);
+    $teacher = Teacher::create([
+        'user_id' => $teacherUser->id,
+        'first_name' => 'Awa',
+        'last_name' => 'Fall',
+        'weekly_hours' => 10,
+        'is_active' => true,
+    ]);
+    $otherTeacher = Teacher::create([
+        'user_id' => $otherTeacherUser->id,
+        'first_name' => 'Moussa',
+        'last_name' => 'Ba',
+        'weekly_hours' => 10,
+        'is_active' => true,
+    ]);
+    $otherAvailability = $otherTeacher->availabilities()->create([
+        'weekday' => 1,
+        'starts_at' => '08:00',
+        'ends_at' => '10:00',
+    ]);
+
+    $this->actingAs($teacherUser)
+        ->get(route('teacher.availabilities.index'))
+        ->assertOk()
+        ->assertSee('Mes disponibilités')
+        ->assertSee('Aucun créneau n’est enregistré.');
+
+    $this->post(route('teacher.availabilities.store'), [
+        'weekday' => 1,
+        'starts_at' => '09:00',
+        'ends_at' => '12:00',
+    ])->assertRedirect(route('teacher.availabilities.index'));
+
+    $this->from(route('teacher.availabilities.index'))
+        ->post(route('teacher.availabilities.store'), [
+            'weekday' => 1,
+            'starts_at' => '11:00',
+            'ends_at' => '13:00',
+        ])
+        ->assertRedirect(route('teacher.availabilities.index'))
+        ->assertSessionHasErrors('starts_at');
+
+    $this->post(route('teacher.availabilities.store'), [
+        'weekday' => 1,
+        'starts_at' => '12:00',
+        'ends_at' => '14:00',
+    ])->assertRedirect(route('teacher.availabilities.index'));
+
+    $this->delete(route('teacher.availabilities.destroy', $otherAvailability))
+        ->assertNotFound();
+
+    expect($teacher->availabilities()->count())->toBe(2)
+        ->and($otherTeacher->availabilities()->count())->toBe(1);
+});
+
+test('declared teacher availability blocks unlisted weekdays in timetable validation', function () {
+    $teacher = Teacher::create([
+        'first_name' => 'Awa',
+        'last_name' => 'Fall',
+        'weekly_hours' => 10,
+        'is_active' => true,
+    ]);
+    $teacher->availabilities()->create([
+        'weekday' => 1,
+        'starts_at' => '09:00',
+        'ends_at' => '12:00',
+    ]);
+
+    try {
+        app(TimetableService::class)->validateSession([
+            'teacher_id' => $teacher->id,
+            'room_id' => 1,
+            'room_capacity' => 30,
+            'weekday' => 2,
+            'starts_at' => '09:00',
+            'ends_at' => '10:00',
+        ]);
+        $this->fail('Une séance hors des créneaux déclarés ne doit pas être acceptée.');
+    } catch (ValidationException $exception) {
+        expect($exception->errors())->toHaveKey('teacher_id');
+    }
+});
+
 test('session schedule changes notify the authorized administrators in the affected department', function () {
     $department = Department::create(['name' => 'Département test', 'code' => 'DPT', 'is_active' => true]);
     $otherDepartment = Department::create(['name' => 'Autre département', 'code' => 'AUT', 'is_active' => true]);
@@ -1177,9 +1750,15 @@ test('administrators can manage records while the director general has read-only
         'admin.events.index',
         'admin.timetable',
         'admin.reports.activity',
+        'admin.reports.attendance',
     ] as $route) {
         $this->get(route($route))->assertOk();
     }
+    $this->get(route('admin.dashboard'))
+        ->assertOk()
+        ->assertSee(route('admin.reports.attendance'))
+        ->assertDontSee(route('admin.absence-justifications.index'))
+        ->assertDontSee(route('admin.grades.validation'));
 
     foreach ([
         ['admin.academic.faculties.show', $faculty],
@@ -1751,6 +2330,165 @@ test('inactive accounts cannot authenticate', function () {
         'email' => $user->email,
         'password' => 'password',
     ])->assertSessionHasErrors('email');
+});
+
+test('attendance reports filter by dates class and course with scoped aggregates and print view', function () {
+    $registrar = User::factory()->create(['role' => 'registrar']);
+    $department = Department::create(['name' => 'Département rapport', 'code' => 'DRAP', 'is_active' => true]);
+    $otherDepartment = Department::create(['name' => 'Département externe', 'code' => 'DEXT', 'is_active' => true]);
+    $formation = Formation::create([
+        'department_id' => $department->id,
+        'name' => 'Formation rapport',
+        'code' => 'FRAP',
+        'is_active' => true,
+    ]);
+    $otherFormation = Formation::create([
+        'department_id' => $otherDepartment->id,
+        'name' => 'Formation externe',
+        'code' => 'FEXT',
+        'is_active' => true,
+    ]);
+    $academicClass = AcademicClass::create([
+        'formation_id' => $formation->id,
+        'name' => 'Classe rapport',
+        'code' => 'CRAP',
+        'capacity' => 30,
+        'is_active' => true,
+    ]);
+    $otherClass = AcademicClass::create([
+        'formation_id' => $otherFormation->id,
+        'name' => 'Classe externe',
+        'code' => 'CEXT',
+        'capacity' => 30,
+        'is_active' => true,
+    ]);
+    $teacher = Teacher::create([
+        'department_id' => $department->id,
+        'first_name' => 'Mamadou',
+        'last_name' => 'Rapport',
+        'weekly_hours' => 10,
+        'is_active' => true,
+    ]);
+    $student = Student::create([
+        'academic_class_id' => $academicClass->id,
+        'matricule' => 'RAP-ETU-001',
+        'first_name' => 'Awa',
+        'last_name' => 'Rapport',
+        'status' => 'active',
+    ]);
+    $secondStudent = Student::create([
+        'academic_class_id' => $academicClass->id,
+        'matricule' => 'RAP-ETU-002',
+        'first_name' => 'Fatou',
+        'last_name' => 'Rapport',
+        'status' => 'active',
+    ]);
+    $course = Course::create([
+        'department_id' => $department->id,
+        'formation_id' => $formation->id,
+        'code' => 'RAP101',
+        'name' => 'Cours du rapport',
+        'credits' => 3,
+        'weekly_hours' => 2,
+        'is_active' => true,
+    ]);
+    $otherCourse = Course::create([
+        'department_id' => $otherDepartment->id,
+        'formation_id' => $otherFormation->id,
+        'code' => 'EXT101',
+        'name' => 'Cours hors périmètre',
+        'credits' => 3,
+        'weekly_hours' => 2,
+        'is_active' => true,
+    ]);
+    $room = Room::create([
+        'name' => 'Salle rapport',
+        'code' => 'SRAP',
+        'capacity' => 30,
+        'type' => 'classroom',
+        'status' => 'available',
+    ]);
+    $session = Seance::create([
+        'course_id' => $course->id,
+        'teacher_id' => $teacher->id,
+        'room_id' => $room->id,
+        'academic_class_id' => $academicClass->id,
+        'weekday' => now()->dayOfWeekIso,
+        'starts_at' => '08:00',
+        'ends_at' => '10:00',
+        'type' => 'lecture',
+    ]);
+    $otherSession = Seance::create([
+        'course_id' => $otherCourse->id,
+        'teacher_id' => $teacher->id,
+        'room_id' => $room->id,
+        'academic_class_id' => $otherClass->id,
+        'weekday' => now()->dayOfWeekIso,
+        'starts_at' => '10:00',
+        'ends_at' => '12:00',
+        'type' => 'lecture',
+    ]);
+
+    foreach (['present', 'absent', 'excused'] as $index => $status) {
+        AttendanceRecord::create([
+            'session_id' => $session->id,
+            'student_id' => $student->id,
+            'teacher_id' => $teacher->id,
+            'attendance_date' => now()->subDays($index + 1)->toDateString(),
+            'status' => $status,
+        ]);
+    }
+    AttendanceRecord::create([
+        'session_id' => $session->id,
+        'student_id' => $secondStudent->id,
+        'teacher_id' => $teacher->id,
+        'attendance_date' => now()->subDay()->toDateString(),
+        'status' => 'late',
+    ]);
+    AttendanceRecord::create([
+        'session_id' => $otherSession->id,
+        'student_id' => $student->id,
+        'teacher_id' => $teacher->id,
+        'attendance_date' => now()->subDay()->toDateString(),
+        'status' => 'absent',
+    ]);
+
+    $filters = [
+        'from_date' => now()->subDays(5)->toDateString(),
+        'to_date' => now()->toDateString(),
+        'academic_class_id' => $academicClass->id,
+        'course_id' => $course->id,
+    ];
+    $this->actingAs($registrar)
+        ->get(route('admin.reports.attendance', $filters))
+        ->assertOk()
+        ->assertSee('Cours du rapport')
+        ->assertSee('Taux d’absence non justifiée')
+        ->assertSee('25,0 %')
+        ->assertSee('33,3 %')
+        ->assertSee('Imprimer / PDF');
+
+    $this->get(route('admin.reports.attendance', [
+        'from_date' => now()->toDateString(),
+        'to_date' => now()->subDay()->toDateString(),
+    ]))->assertSessionHasErrors('from_date');
+
+    $departmentManager = User::factory()->create([
+        'role' => 'department_manager',
+        'department_id' => $department->id,
+    ]);
+    $this->actingAs($departmentManager)
+        ->get(route('admin.reports.attendance'))
+        ->assertOk()
+        ->assertSee('Cours du rapport')
+        ->assertDontSee('Cours hors périmètre');
+
+    $this->get(route('admin.reports.attendance', ['course_id' => $otherCourse->id]))
+        ->assertNotFound();
+
+    $this->actingAs(User::factory()->create(['role' => 'teacher']))
+        ->get(route('admin.reports.attendance'))
+        ->assertForbidden();
 });
 
 test('the automatic timetable generator assigns a course to a valid room and teacher', function () {

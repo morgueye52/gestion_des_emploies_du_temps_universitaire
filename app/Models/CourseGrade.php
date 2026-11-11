@@ -16,6 +16,10 @@ class CourseGrade extends Model
         'score',
         'assessed_on',
         'comment',
+        'status',
+        'reviewer_user_id',
+        'reviewed_at',
+        'review_comment',
     ];
 
     protected function casts(): array
@@ -23,6 +27,7 @@ class CourseGrade extends Model
         return [
             'score' => 'decimal:2',
             'assessed_on' => 'date',
+            'reviewed_at' => 'datetime',
         ];
     }
 
@@ -39,5 +44,10 @@ class CourseGrade extends Model
     public function teacher(): BelongsTo
     {
         return $this->belongsTo(Teacher::class);
+    }
+
+    public function reviewer(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'reviewer_user_id');
     }
 }

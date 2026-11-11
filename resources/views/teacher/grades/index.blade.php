@@ -5,7 +5,7 @@
 <div class="page-heading">
     <div>
         <h1>Gestion des notes</h1>
-        <p>Saisissez les résultats des étudiants inscrits à vos cours. Les notes sont sur 20.</p>
+        <p>Saisissez les résultats des étudiants inscrits à vos cours. Les notes sont sur 20 et restent invisibles aux étudiants jusqu’à leur publication.</p>
     </div>
 </div>
 
@@ -84,7 +84,7 @@
             <div class="card-header py-3 px-4">Notes déjà saisies</div>
             <div class="table-responsive">
                 <table class="table mb-0">
-                    <thead><tr><th>Étudiant</th><th>Évaluation</th><th>Type</th><th>Note</th><th>Date</th><th>Commentaire</th><th></th></tr></thead>
+                    <thead><tr><th>Étudiant</th><th>Évaluation</th><th>Type</th><th>Note</th><th>État</th><th>Date</th><th>Commentaire</th><th></th></tr></thead>
                     <tbody>
                     @forelse($grades as $grade)
                         <tr>
@@ -92,18 +92,30 @@
                             <td>{{ $grade->assessment_name }}</td>
                             <td>{{ ['controle'=>'Contrôle continu','examen'=>'Examen','devoir'=>'Devoir','tp'=>'Travaux pratiques','autre'=>'Autre'][$grade->assessment_type] ?? $grade->assessment_type }}</td>
                             <td><strong>{{ rtrim(rtrim(number_format((float)$grade->score, 2, ',', ''), '0'), ',') }}/20</strong></td>
+                            <td>
+                                <span class="badge text-bg-{{ $grade->status === 'pending' ? 'warning' : ($grade->status === 'published' ? 'success' : 'danger') }}">
+                                    {{ ['pending'=>'En attente','published'=>'Publiée','rejected'=>'À corriger'][$grade->status] ?? $grade->status }}
+                                </span>
+                                @if($grade->status === 'rejected' && $grade->review_comment)
+                                    <div class="small text-danger mt-1">{{ $grade->review_comment }}</div>
+                                @endif
+                            </td>
                             <td>{{ $grade->assessed_on->locale('fr')->translatedFormat('d F Y') }}</td>
                             <td>{{ $grade->comment ?: '—' }}</td>
                             <td class="text-end text-nowrap">
-                                <a class="btn btn-sm btn-outline-primary" href="{{ route('teacher.grades.edit', $grade) }}">Modifier</a>
-                                <form class="d-inline" method="POST" action="{{ route('teacher.grades.destroy', $grade) }}" onsubmit="return confirm('Supprimer cette note ?')">
-                                    @csrf @method('DELETE')
-                                    <button class="btn btn-sm btn-outline-danger" type="submit">Supprimer</button>
-                                </form>
+                                @if($grade->status !== 'published')
+                                    <a class="btn btn-sm btn-outline-primary" href="{{ route('teacher.grades.edit', $grade) }}">Modifier</a>
+                                    <form class="d-inline" method="POST" action="{{ route('teacher.grades.destroy', $grade) }}" onsubmit="return confirm('Supprimer cette note ?')">
+                                        @csrf @method('DELETE')
+                                        <button class="btn btn-sm btn-outline-danger" type="submit">Supprimer</button>
+                                    </form>
+                                @else
+                                    <span class="small text-secondary">Verrouillée après publication</span>
+                                @endif
                             </td>
                         </tr>
                     @empty
-                        <tr><td colspan="7" class="text-center py-4 text-secondary">Aucune note n’a encore été saisie pour ce cours.</td></tr>
+                        <tr><td colspan="8" class="text-center py-4 text-secondary">Aucune note n’a encore été saisie pour ce cours.</td></tr>
                     @endforelse
                     </tbody>
                 </table>

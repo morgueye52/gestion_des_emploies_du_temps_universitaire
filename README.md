@@ -63,8 +63,17 @@ crée également son profil enseignant. N'ajoutez jamais de sélection de rôle 
   lorsque leur dossier, leur classe et le semestre concerné sont actifs.
 - Saisie, modification, suppression et consultation des notes sur 20 ; les enseignants
   ne peuvent noter que les étudiants inscrits à leurs cours affectés.
+- Validation des notes par la direction académique ou la scolarité avant publication ;
+  les notes déjà enregistrées restent publiées et les notes publiées sont verrouillées.
+- Relevé étudiant avec moyenne simple par cours et moyenne semestrielle pondérée par
+  crédits, calculées sur les évaluations disponibles et imprimables en PDF.
 - Appel daté par séance (présent, absent, en retard ou absence justifiée) et historique
   de présence consultable individuellement par chaque étudiant.
+- Demandes de justification d’absence avec pièce jointe privée, décision de l’enseignant
+  responsable ou de la scolarité, et notifications envoyées à l’étudiant et à l’enseignant.
+- Rapport d’assiduité filtrable par classe, cours et période, avec indicateurs et impression/PDF.
+- Gestion personnelle des créneaux de disponibilité des enseignants, appliqués lors
+  de la validation et de la génération des emplois du temps.
 - Affectation de plusieurs enseignants à un cours.
 - Structure relationnelle facultés, départements, formations, niveaux, classes,
   groupes, années universitaires et semestres.

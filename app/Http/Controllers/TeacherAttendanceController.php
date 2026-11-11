@@ -103,11 +103,27 @@ class TeacherAttendanceController extends Controller
         DB::transaction(function () use ($data, $date, $session, $teacher, $students, $request, $logger) {
             foreach ($students as $studentId) {
                 $attendance = $data['attendance'][$studentId] ?? $data['attendance'][(int) $studentId];
-                $record = AttendanceRecord::query()->firstOrNew([
-                    'session_id' => $session->id,
-                    'attendance_date' => $date,
-                    'student_id' => $studentId,
-                ]);
+                $record = AttendanceRecord::query()
+                    ->with('justification')
+                    ->where('session_id', $session->id)
+                    ->where('student_id', $studentId)
+                    ->whereDate('attendance_date', $date)
+                    ->first();
+
+                if (! $record) {
+                    $record = new AttendanceRecord([
+                        'session_id' => $session->id,
+                        'attendance_date' => $date,
+                        'student_id' => $studentId,
+                    ]);
+                }
+
+                if ($record->justification?->status === 'approved' && $attendance['status'] !== 'excused') {
+                    throw ValidationException::withMessages([
+                        "attendance.{$studentId}.status" => 'Cette absence a été justifiée et validée ; son statut ne peut plus être modifié depuis l’appel.',
+                    ]);
+                }
+
                 $oldValues = $record->exists ? $record->getAttributes() : null;
                 $record->fill([
                     'teacher_id' => $teacher->id,

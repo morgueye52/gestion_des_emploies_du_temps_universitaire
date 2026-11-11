@@ -42,6 +42,11 @@
                     <nav class="sidebar-nav">
                         @if(auth()->user()->hasRole(['admin','super_admin','director_general','academic_direction','studies_manager','department_manager','registrar']))
                         <a class="{{ request()->routeIs('admin.students.*') ? 'active' : '' }}" href="{{ route('admin.students.index') }}"><i class="bi bi-people"></i> Étudiants</a>
+                        <a class="{{ request()->routeIs('admin.reports.attendance') ? 'active' : '' }}" href="{{ route('admin.reports.attendance') }}"><i class="bi bi-bar-chart-line"></i> Rapport des présences</a>
+                        @if(auth()->user()->hasRole(['admin','super_admin','academic_direction','studies_manager','department_manager','registrar']))
+                            <a class="{{ request()->routeIs('admin.absence-justifications.*') ? 'active' : '' }}" href="{{ route('admin.absence-justifications.index') }}"><i class="bi bi-file-earmark-medical"></i> Justificatifs d’absence</a>
+                            <a class="{{ request()->routeIs('admin.grades.validation', 'admin.grades.review') ? 'active' : '' }}" href="{{ route('admin.grades.validation') }}"><i class="bi bi-check2-square"></i> Validation des notes</a>
+                        @endif
                         @endif
                         @if(auth()->user()->hasRole(['admin','super_admin','director_general','academic_direction','studies_manager','hr_admin']))
                         <a class="{{ request()->routeIs('admin.teachers.*') ? 'active' : '' }}" href="{{ route('admin.teachers.index') }}"><i class="bi bi-person-workspace"></i> Enseignants</a>
@@ -88,6 +93,8 @@
                         @elseif(auth()->user()->hasRole('teacher'))
                             <a class="{{ request()->routeIs('teacher.grades.*') ? 'active' : '' }}" href="{{ route('teacher.grades.index') }}"><i class="bi bi-journal-check"></i> Gestion des notes</a>
                             <a class="{{ request()->routeIs('teacher.attendance.*') ? 'active' : '' }}" href="{{ route('teacher.attendance.index') }}"><i class="bi bi-calendar2-check"></i> Faire l’appel</a>
+                            <a class="{{ request()->routeIs('teacher.absence-justifications.*') ? 'active' : '' }}" href="{{ route('teacher.absence-justifications.index') }}"><i class="bi bi-file-earmark-medical"></i> Justificatifs à examiner</a>
+                            <a class="{{ request()->routeIs('teacher.availabilities.*') ? 'active' : '' }}" href="{{ route('teacher.availabilities.index') }}"><i class="bi bi-clock-history"></i> Mes disponibilités</a>
                         @endif
                         <a href="{{ route('notifications.index') }}"><i class="bi bi-bell"></i> Notifications <span class="ms-auto badge text-bg-primary">{{ auth()->user()->unreadNotifications()->count() }}</span></a>
                         <a href="{{ route('profile.edit') }}"><i class="bi bi-person-circle"></i> Mon profil</a>

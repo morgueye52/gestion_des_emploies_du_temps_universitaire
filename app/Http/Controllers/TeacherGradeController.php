@@ -47,17 +47,21 @@ class TeacherGradeController extends Controller
     {
         $teacher = $this->teacherFor($request);
         $data = $this->validatedData($request, $teacher);
-        $grade = CourseGrade::create($data + ['teacher_id' => $teacher->id]);
+        $grade = CourseGrade::create($data + [
+            'teacher_id' => $teacher->id,
+            'status' => 'pending',
+        ]);
         $logger->record($request, 'created', $grade, null, $grade->getAttributes());
 
         return redirect()->route('teacher.grades.index', ['course_id' => $grade->course_id])
-            ->with('success', 'La note a été enregistrée.');
+            ->with('success', 'La note a été enregistrée et transmise à la validation.');
     }
 
     public function edit(Request $request, CourseGrade $grade): View
     {
         $teacher = $this->teacherFor($request);
         abort_unless($grade->teacher_id === $teacher->id, 404);
+        abort_if($grade->status === 'published', 403, 'Cette note est publiée et ne peut plus être modifiée.');
 
         $grade->load(['course', 'student']);
 
@@ -68,19 +72,27 @@ class TeacherGradeController extends Controller
     {
         $teacher = $this->teacherFor($request);
         abort_unless($grade->teacher_id === $teacher->id, 404);
+        abort_if($grade->status === 'published', 403, 'Cette note est publiée et ne peut plus être modifiée.');
         $data = $this->validatedData($request, $teacher, $grade);
+        $data += [
+            'status' => 'pending',
+            'reviewer_user_id' => null,
+            'reviewed_at' => null,
+            'review_comment' => null,
+        ];
         $oldValues = $grade->only(array_keys($data));
         $grade->update($data);
         $logger->record($request, 'updated', $grade, $oldValues, $data);
 
         return redirect()->route('teacher.grades.index', ['course_id' => $grade->course_id])
-            ->with('success', 'La note a été modifiée.');
+            ->with('success', 'La note a été modifiée et retransmise à la validation.');
     }
 
     public function destroy(Request $request, CourseGrade $grade, ActivityLogger $logger): RedirectResponse
     {
         $teacher = $this->teacherFor($request);
         abort_unless($grade->teacher_id === $teacher->id, 404);
+        abort_if($grade->status === 'published', 403, 'Cette note est publiée et ne peut plus être supprimée.');
         $courseId = $grade->course_id;
         $logger->record($request, 'deleted', $grade, $grade->getAttributes());
         $grade->delete();
